@@ -594,6 +594,9 @@ namespace dxvk {
     void FreeMappedBuffer(
             UINT                  Subresource);
     
+    bool TryDropStorageUsage(
+            DxvkImageCreateInfo*  pImageInfo);
+
     BOOL CheckImageSupport(
       const DxvkImageCreateInfo*  pImageInfo,
             VkImageTiling         Tiling) const;

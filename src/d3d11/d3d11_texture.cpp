@@ -222,7 +222,8 @@ namespace dxvk {
       imageInfo.layout = OptimizeLayout(imageInfo.usage);
 
     // Check if we can actually create the image
-    if (!CheckImageSupport(&imageInfo, imageInfo.tiling)) {
+    if (!CheckImageSupport(&imageInfo, imageInfo.tiling)
+     && !TryDropStorageUsage(&imageInfo)) {
       throw DxvkError(str::format(
         "D3D11: Cannot create texture:",
         "\n  Format:  ", m_desc.Format,
@@ -511,6 +512,30 @@ namespace dxvk {
     }
 
     return S_OK;
+  }
+
+
+  bool D3D11CommonTexture::TryDropStorageUsage(
+          DxvkImageCreateInfo*  pImageInfo) {
+    if (!(pImageInfo->usage & VK_IMAGE_USAGE_STORAGE_BIT))
+      return false;
+
+    DxvkImageCreateInfo fallback = *pImageInfo;
+    fallback.usage &= ~VK_IMAGE_USAGE_STORAGE_BIT;
+
+    if (!CheckImageSupport(&fallback, fallback.tiling))
+      return false;
+
+    Logger::warn(str::format("D3D11: Storage usage unsupported for format ", m_desc.Format,
+      " (", m_desc.Width, "x", m_desc.Height, "x", m_desc.Depth,
+      "), creating texture without UAV support"));
+
+    if (fallback.tiling == VK_IMAGE_TILING_OPTIMAL)
+      fallback.layout = OptimizeLayout(fallback.usage);
+
+    *pImageInfo = fallback;
+    m_desc.BindFlags &= ~D3D11_BIND_UNORDERED_ACCESS;
+    return true;
   }
 
 
