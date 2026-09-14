@@ -77,6 +77,21 @@ namespace dxvk {
       formatFamily.Add(VK_FORMAT_R32_SINT);
     }
 
+    if ((m_desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+     && !CheckFormatFeatureSupport(formatInfo.Format, VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT)) {
+      VkFormat fallback = GetStorageFallbackFormat(formatInfo.Format);
+
+      if (fallback != VK_FORMAT_UNDEFINED
+       && CheckFormatFeatureSupport(fallback, VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT)) {
+        formatFamily.Add(formatInfo.Format);
+        formatFamily.Add(fallback);
+        m_uavStorageFormat = fallback;
+
+        Logger::info(str::format("D3D11: Format ", m_desc.Format,
+          " has no storage image support, using ", fallback, " for UAV views"));
+      }
+    }
+
     // The image must be marked as mutable if it can be reinterpreted
     // by a view with a different format. Depth-stencil formats cannot
     // be reinterpreted in Vulkan, so we'll ignore those.
@@ -122,7 +137,8 @@ namespace dxvk {
 
       // UAVs are not supported for sRGB formats on most drivers,
       // but we can still create linear views for the image
-      if (formatProperties->flags.test(DxvkFormatFlag::ColorSpaceSrgb))
+      if (formatProperties->flags.test(DxvkFormatFlag::ColorSpaceSrgb)
+       || m_uavStorageFormat != VK_FORMAT_UNDEFINED)
         imageInfo.flags |= VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
     }
 
@@ -853,6 +869,18 @@ namespace dxvk {
   }
   
   
+  VkFormat D3D11CommonTexture::GetStorageFallbackFormat(
+          VkFormat              Format) {
+    switch (Format) {
+      case VK_FORMAT_B8G8R8A8_UNORM:
+      case VK_FORMAT_B8G8R8A8_SRGB:
+        return VK_FORMAT_R8G8B8A8_UNORM;
+      default:
+        return VK_FORMAT_UNDEFINED;
+    }
+  }
+
+
   BOOL D3D11CommonTexture::IsR32UavCompatibleFormat(
           DXGI_FORMAT           Format) {
     return Format == DXGI_FORMAT_R8G8B8A8_TYPELESS
