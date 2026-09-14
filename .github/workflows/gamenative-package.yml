@@ -1,0 +1,75 @@
+name: GameNative package
+
+on:
+  push:
+    tags: ['gn-*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version name (e.g. 2.7.1-gn1)'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#gn-}"
+          fi
+          echo "VERSION_NAME=$V" >> "$GITHUB_ENV"
+
+      - name: Build (mingw-w64)
+        uses: Joshua-Ashton/arch-mingw-github-action@v8
+        with:
+          command: |
+            ./package-release.sh "$VERSION_NAME" build --no-package
+
+      - name: Package for GameNative
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd xz-utils
+          src="build/dxvk-$VERSION_NAME"
+          pkg="pkg"
+          mkdir -p "$pkg/system32" "$pkg/syswow64"
+          cp "$src"/x64/*.dll "$pkg/system32/"
+          cp "$src"/x32/*.dll "$pkg/syswow64/"
+          python3 - "$pkg" "$VERSION_NAME" <<'PY'
+          import json, os, sys
+          pkg, ver = sys.argv[1], sys.argv[2]
+          files = []
+          for d, var in (("system32", "${system32}"), ("syswow64", "${syswow64}")):
+              for f in sorted(os.listdir(os.path.join(pkg, d))):
+                  files.append({"source": f"{d}/{f}", "target": f"{var}/{f}"})
+          json.dump({"type": "DXVK", "versionName": ver, "versionCode": 1,
+                     "description": f"DXVK {ver} (GameNative build)", "files": files},
+                    open(os.path.join(pkg, "profile.json"), "w"), indent=2)
+          PY
+          mkdir -p out
+          tar -C "$pkg" --zstd -cf "out/dxvk-$VERSION_NAME.tzst" system32 syswow64
+          tar -C "$pkg" -cJf "out/dxvk-$VERSION_NAME.wcp" profile.json system32 syswow64
+          ls -la out
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-${{ env.VERSION_NAME }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/gn-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
