@@ -298,6 +298,13 @@ namespace dxvk {
      * may be different from the image format on some systems.
      * \returns Packed Vulkan format
      */
+    VkFormat GetUavStorageFormat() const {
+      return m_uavStorageFormat;
+    }
+
+    static VkFormat GetStorageFallbackFormat(
+            VkFormat              Format);
+
     VkFormat GetPackedFormat() const {
       return m_packedFormat;
     }
@@ -581,6 +588,7 @@ namespace dxvk {
     D3D11_COMMON_TEXTURE_MAP_MODE m_mapMode;
     DXGI_USAGE                    m_dxgiUsage;
     VkFormat                      m_packedFormat;
+    VkFormat                      m_uavStorageFormat = VK_FORMAT_UNDEFINED;
     
     Rc<DxvkImage>                 m_image;
     small_vector<MappedBuffer, 6> m_buffers;

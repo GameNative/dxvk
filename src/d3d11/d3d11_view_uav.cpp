@@ -63,6 +63,12 @@ namespace dxvk {
       viewInfo.aspects = formatInfo.Aspect;
       viewInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT;
 
+      VkFormat storageFallback = D3D11CommonTexture::GetStorageFallbackFormat(viewInfo.format);
+
+      if (storageFallback != VK_FORMAT_UNDEFINED
+       && storageFallback == texture->GetUavStorageFormat())
+        viewInfo.format = storageFallback;
+
       if (!util::isIdentityMapping(formatInfo.Swizzle))
         Logger::warn(str::format("UAV format ", pDesc->Format, " has non-identity swizzle, but UAV swizzles are not supported"));
 
