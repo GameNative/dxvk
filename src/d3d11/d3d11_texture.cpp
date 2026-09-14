@@ -346,6 +346,11 @@ namespace dxvk {
     DXGI_VK_FORMAT_MODE formatMode = GetFormatMode();
     DXGI_VK_FORMAT_INFO viewFormat = m_device->LookupFormat(Format,        formatMode);
     DXGI_VK_FORMAT_INFO baseFormat = m_device->LookupFormat(m_desc.Format, formatMode);
+
+    if ((BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+     && m_uavStorageFormat != VK_FORMAT_UNDEFINED
+     && GetStorageFallbackFormat(viewFormat.Format) == m_uavStorageFormat)
+      viewFormat.Format = m_uavStorageFormat;
     
     // Check whether the plane index is valid for the given format
     uint32_t planeCount = GetPlaneCount();
