@@ -29,17 +29,36 @@ jobs:
           fi
           echo "VERSION_NAME=$V" >> "$GITHUB_ENV"
 
+      - name: Install toolchain
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq meson ninja-build glslang-tools mingw-w64 mingw-w64-tools zstd xz-utils
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+          sudo update-alternatives --set i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
+          sudo update-alternatives --set i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+          x86_64-w64-mingw32-g++ --version | head -1
+          glslangValidator --version | head -1
+
       - name: Build (mingw-w64)
-        uses: Joshua-Ashton/arch-mingw-github-action@v8
-        with:
-          command: |
-            ./package-release.sh "$VERSION_NAME" build --no-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$PWD/build/dxvk-$VERSION_NAME"
+          for arch in 64 32; do
+            meson setup --cross-file "build-win$arch.txt" \
+              --buildtype release --prefix "$out" --bindir "x$arch" --libdir "x$arch" \
+              --strip -Db_ndebug=if-release -Dbuild_id=false "build/b$arch"
+            ninja -C "build/b$arch" install
+            rm -f "$out/x$arch"/*.a
+          done
+          ls -la "$out/x64" "$out/x32"
 
       - name: Package for GameNative
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq zstd xz-utils
           src="build/dxvk-$VERSION_NAME"
           pkg="pkg"
           mkdir -p "$pkg/system32" "$pkg/syswow64"
