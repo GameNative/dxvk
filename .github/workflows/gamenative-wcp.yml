@@ -1,0 +1,105 @@
+name: GameNative package (.wcp)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to build (empty = the branch the workflow runs from)
+        required: false
+        default: ''
+      variant_name:
+        description: Variant name used in versionName (<name>-<version>-<shortsha>); letters, digits, underscore
+        required: false
+        default: gamenative
+  pull_request:
+  push:
+    branches: [gamenative-ci]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    container: archlinux/archlinux:base-devel
+
+    steps:
+    - name: Install dependencies
+      run: |
+        pacman -Syu --needed --noconfirm git meson mingw-w64-gcc glslang zstd jq
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Resolve package name
+      env:
+        VARIANT_NAME: ${{ inputs.variant_name || 'gamenative' }}
+      run: |
+        set -euo pipefail
+        if ! [[ "$VARIANT_NAME" =~ ^[A-Za-z0-9_]+$ ]]; then
+          echo "::error::variant_name must match [A-Za-z0-9_]+ (got '$VARIANT_NAME')"; exit 1
+        fi
+        lower="${VARIANT_NAME,,}"
+        for bad in proton wine vkd3d; do
+          if [[ "$lower" == *"$bad"* ]]; then
+            echo "::error::variant_name must not contain '$bad': the app picks the content type from that substring"; exit 1
+          fi
+        done
+        UPSTREAM_VERSION="$(git describe --tags --abbrev=0 --match 'v[0-9]*' | sed 's/^v//')"
+        SHORT_SHA="$(git rev-parse --short=8 HEAD)"
+        VERSION_NAME="${VARIANT_NAME}-${UPSTREAM_VERSION}-${SHORT_SHA}"
+        echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+        echo "VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+        echo "PACKAGE_FILE=dxvk-${VERSION_NAME}.wcp" >> "$GITHUB_ENV"
+        echo "versionName=$VERSION_NAME versionCode=${{ github.run_number }}"
+
+    - name: Build release (x64 + x32, stripped)
+      run: ./package-release.sh "$VERSION_NAME" build --no-package
+
+    - name: Assemble .wcp
+      run: |
+        set -euo pipefail
+        src="build/dxvk-$VERSION_NAME"
+        pkg="$RUNNER_TEMP/pkg"
+        mkdir -p "$pkg/system32" "$pkg/syswow64"
+        cp "$src"/x64/*.dll "$pkg/system32/"
+        cp "$src"/x32/*.dll "$pkg/syswow64/"
+        files='[]'
+        for dir in system32 syswow64; do
+          for dll in "$pkg/$dir"/*.dll; do
+            name="$(basename "$dll")"
+            files="$(jq -c --arg s "$dir/$name" --arg t "\${$dir}/$name" '. + [{source: $s, target: $t}]' <<<"$files")"
+          done
+        done
+        jq -n \
+          --arg type DXVK \
+          --arg versionName "$VERSION_NAME" \
+          --argjson versionCode "$VERSION_CODE" \
+          --arg description "DXVK $VERSION_NAME built from ${GITHUB_REPOSITORY}@$(git rev-parse HEAD)" \
+          --argjson files "$files" \
+          '{type: $type, versionName: $versionName, versionCode: $versionCode, description: $description, files: $files}' \
+          > "$pkg/profile.json"
+        cat "$pkg/profile.json"
+        mkdir -p out
+        tar --owner=0 --group=0 --numeric-owner -C "$pkg" -cf - . | zstd -19 -T0 -o "out/$PACKAGE_FILE"
+        zstd -dc "out/$PACKAGE_FILE" | tar -tvf -
+
+    - name: Upload package
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.PACKAGE_FILE }}
+        path: out/${{ env.PACKAGE_FILE }}
+        if-no-files-found: error
+        compression-level: 0
+
+    - name: Attach to release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: out/${{ env.PACKAGE_FILE }}
